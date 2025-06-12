@@ -4,7 +4,24 @@ use std::io::prelude::*;
 use std::io::BufReader;
 
 mod interpreter;
+
+mod jit_compiler;
+
+use jit_compiler::JitCompiler;
+
 mod jit_compiler_x64;
+mod jit_compiler_arm64;
+
+fn get_compiler() -> impl jit_compiler::JitCompiler {
+    #[cfg(target_arch = "x86_64")]
+    {
+        jit_compiler_x64::JitCompilerX64::new()
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        jit_compiler_arm64::JitCompilerARM64::new()
+    }
+}
 
 const VERSION: &'static str = env!("CARGO_PKG_VERSION");
 
@@ -28,7 +45,7 @@ fn main() {
     if args.len() > 2 && args[1] == "--no-jit" {
         interpreter::interpret(&read_file(&args[2]));
     } else if args.len() > 1 {
-        let mut j = jit_compiler_x64::JitCompiler::new();
+        let mut j = get_compiler();
         j.compile_and_run(&read_file(&args[1]));
     } else {
         println!("Rainfuck version {}\n", VERSION);
