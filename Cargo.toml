@@ -5,5 +5,7 @@ version = "0.0.2"
 authors = [ "dontpanic <lishengqiu.hit@gmail.com>" ]
 
 [dependencies]
+dynasm = "3.2.0"
+dynasmrt = "3.2.0"
 
-libc = "*"
+libc = "0.2.172"
