@@ -176,9 +176,7 @@ impl JitCompiler for JitCompilerARM64 {
         );
         
         // Finalize assembly and get executable buffer
-        println!("DEBUG HERE");
         let exec_buffer = ops.finalize().unwrap();
-        println!("{exec_buffer:?}");
         // Get executable function pointer
         let code_fn: extern "C" fn(*mut u8) = unsafe {
             mem::transmute(exec_buffer.ptr(entry))

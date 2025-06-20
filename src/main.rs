@@ -40,14 +40,7 @@ fn read_file(path: &String) -> String{
     code_buffer
 }
 
-fn main_test() {
-    let mut j = get_compiler();
-    j.compile_and_run(&read_file(&"bf_programs/basic.bf".into()));
-}
-
 fn main() {
-    main_test();
-    return;
     let args: Vec<String> = env::args().collect();
     if args.len() > 2 && args[1] == "--no-jit" {
         interpreter::interpret(&read_file(&args[2]));
