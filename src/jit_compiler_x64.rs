@@ -1,6 +1,6 @@
 extern crate libc;
 
-extern {
+extern "C" {
     fn memcpy(dest: *mut libc::c_void, srouce: *mut libc::c_void, n: libc::size_t) -> *mut libc::c_void;
     fn putchar(ch: libc::c_int) -> libc::c_int;
 }
@@ -10,7 +10,9 @@ use std::mem;
 use std::slice;
 use std::collections::HashMap;
 
-enum Reg{
+use crate::jit_compiler::JitCompiler;
+
+enum RegX64 {
     Rax,
     Rbx,
     Rcx,
@@ -31,7 +33,7 @@ enum PanicReason {
 }
 
 const DEFAULT_NUM_PAGES: usize = 2;
-struct JitCode {
+struct JitCodeX64 {
     machine_code: *mut u8,
     code_size: usize,
     buf_size: usize,
@@ -44,9 +46,12 @@ struct JitCode {
     patch_tbl: HashMap<usize, usize>
 }
 
-impl JitCode {
-    fn new() -> JitCode {
-        let mut jc = JitCode {
+
+
+
+impl JitCodeX64 {
+    fn new() -> JitCodeX64 {
+        let mut jc = JitCodeX64 {
                 machine_code: 0 as *mut u8,
                 code_size: 0,
                 page_size: 0,
@@ -76,7 +81,7 @@ impl JitCode {
 
             match libc::posix_memalign(&mut memory, page_size, buf_size) {
                 0 => (),
-                _ => JitCode::panic(PanicReason::MemoryError)
+                _ => JitCodeX64::panic(PanicReason::MemoryError)
             }
 
             libc::mprotect(memory, buf_size, libc::PROT_WRITE | libc::PROT_READ);
@@ -93,7 +98,7 @@ impl JitCode {
 
     fn check_buffer(&mut self, newcode_len: usize) {
         if self.code_size + newcode_len >= self.buf_size {
-            JitCode::expand_buffer(self);
+            JitCodeX64::expand_buffer(self);
         }
     }
 
@@ -107,63 +112,63 @@ impl JitCode {
         }
     }
 
-    fn emit_push_r(&mut self, op: Reg) {
+    fn emit_push_r(&mut self, op: RegX64) {
         match op {
-            Reg::Rbp => self.emit_code(&[0x55]),
-            Reg::Rdx => self.emit_code(&[0x52]),
-            Reg::Rbx => self.emit_code(&[0x53]),
-            _ => JitCode::panic(PanicReason::NotSupported)
+            RegX64::Rbp => self.emit_code(&[0x55]),
+            RegX64::Rdx => self.emit_code(&[0x52]),
+            RegX64::Rbx => self.emit_code(&[0x53]),
+            _ => JitCodeX64::panic(PanicReason::NotSupported)
         }
     }
 
-    fn emit_mov_rr(&mut self, op1: Reg, op2: Reg) {
+    fn emit_mov_rr(&mut self, op1: RegX64, op2: RegX64) {
         match (op1, op2) {
-            (Reg::Rbp, Reg::Rsp) => self.emit_code(&[0x48, 0x89, 0xe5]),
-            (Reg::Rsp, Reg::Rbp) => self.emit_code(&[0x48, 0x89, 0xEC]),
-            (Reg::Rdx, Reg::Rdi) => self.emit_code(&[0x48, 0x89, 0xFA]),
-            (Reg::Rdi, Reg::Rax) => self.emit_code(&[0x48, 0x89, 0xC7]),
-            (Reg::Rdi, Reg::Rbx) => self.emit_code(&[0x48, 0x89, 0xDF]),
-            (Reg::Rdi, Reg::Rcx) => self.emit_code(&[0x48, 0x89, 0xCF]),
-            (Reg::Rdi, Reg::Rdx) => self.emit_code(&[0x48, 0x89, 0xD7]),
-            _ => JitCode::panic(PanicReason::NotSupported)
+            (RegX64::Rbp, RegX64::Rsp) => self.emit_code(&[0x48, 0x89, 0xe5]),
+            (RegX64::Rsp, RegX64::Rbp) => self.emit_code(&[0x48, 0x89, 0xEC]),
+            (RegX64::Rdx, RegX64::Rdi) => self.emit_code(&[0x48, 0x89, 0xFA]),
+            (RegX64::Rdi, RegX64::Rax) => self.emit_code(&[0x48, 0x89, 0xC7]),
+            (RegX64::Rdi, RegX64::Rbx) => self.emit_code(&[0x48, 0x89, 0xDF]),
+            (RegX64::Rdi, RegX64::Rcx) => self.emit_code(&[0x48, 0x89, 0xCF]),
+            (RegX64::Rdi, RegX64::Rdx) => self.emit_code(&[0x48, 0x89, 0xD7]),
+            _ => JitCodeX64::panic(PanicReason::NotSupported)
         }
     }
 
-    fn emit_mov_ri(&mut self, op1: Reg, op2: u64) {
-        let is32 = JitCode::imm_is_u32(op2);
+    fn emit_mov_ri(&mut self, op1: RegX64, op2: u64) {
+        let is32 = JitCodeX64::imm_is_u32(op2);
 
         match (op1, is32) {
-            (Reg::Rax, true) => self.emit_code(&[0x48, 0xC7, 0xC0]),
-            (Reg::Rax, false) => self.emit_code(&[0x48, 0xB8]),
-            (Reg::Rbx, true) => self.emit_code(&[0x48, 0xC7, 0xC3]),
-            (Reg::Rbx, false) => self.emit_code(&[0x48, 0xBB]),
-            (Reg::Rcx, true) => self.emit_code(&[0x48, 0xC7, 0xC1]),
-            (Reg::Rcx, false) => self.emit_code(&[0x48, 0xB9]),
-            (Reg::Rdi, true) => self.emit_code(&[0x48, 0xC7, 0xC7]),
-            (Reg::Rdi, false) => self.emit_code(&[0x48, 0xBF]),
-            _ => JitCode::panic(PanicReason::NotSupported)
+            (RegX64::Rax, true) => self.emit_code(&[0x48, 0xC7, 0xC0]),
+            (RegX64::Rax, false) => self.emit_code(&[0x48, 0xB8]),
+            (RegX64::Rbx, true) => self.emit_code(&[0x48, 0xC7, 0xC3]),
+            (RegX64::Rbx, false) => self.emit_code(&[0x48, 0xBB]),
+            (RegX64::Rcx, true) => self.emit_code(&[0x48, 0xC7, 0xC1]),
+            (RegX64::Rcx, false) => self.emit_code(&[0x48, 0xB9]),
+            (RegX64::Rdi, true) => self.emit_code(&[0x48, 0xC7, 0xC7]),
+            (RegX64::Rdi, false) => self.emit_code(&[0x48, 0xBF]),
+            _ => JitCodeX64::panic(PanicReason::NotSupported)
         }
 
         if is32 {
-            self.emit_code(JitCode::get_raw_slice(&(op2 as u32).to_le()));
+            self.emit_code(JitCodeX64::get_raw_slice(&(op2 as u32).to_le()));
         } else {
-            self.emit_code(JitCode::get_raw_slice(&(op2).to_le()));
+            self.emit_code(JitCodeX64::get_raw_slice(&(op2).to_le()));
         }
     }
 
-    fn emit_inc_r(&mut self, op: Reg) {
+    fn emit_inc_r(&mut self, op: RegX64) {
         match op {
-            Reg::Rbx => self.emit_code(&[0x48, 0xFF, 0xC3]),
-            Reg::Rcx => self.emit_code(&[0x48, 0xFF, 0xC1]),
-            _ => JitCode::panic(PanicReason::NotSupported)
+            RegX64::Rbx => self.emit_code(&[0x48, 0xFF, 0xC3]),
+            RegX64::Rcx => self.emit_code(&[0x48, 0xFF, 0xC1]),
+            _ => JitCodeX64::panic(PanicReason::NotSupported)
         }
     }
 
-    fn emit_dec_r(&mut self, op: Reg) {
+    fn emit_dec_r(&mut self, op: RegX64) {
         match op {
-            Reg::Rbx => self.emit_code(&[0x48, 0xFF, 0xCB]),
-            Reg::Rcx => self.emit_code(&[0x48, 0xFF, 0xC9]),
-            _ => JitCode::panic(PanicReason::NotSupported)
+            RegX64::Rbx => self.emit_code(&[0x48, 0xFF, 0xCB]),
+            RegX64::Rcx => self.emit_code(&[0x48, 0xFF, 0xC9]),
+            _ => JitCodeX64::panic(PanicReason::NotSupported)
         }
     }
 
@@ -173,20 +178,20 @@ impl JitCode {
         self.emit_code(&[0x12, 0x34, 0x56, 0x78]);
     }
 
-    fn emit_call_r(&mut self, op: Reg) {
+    fn emit_call_r(&mut self, op: RegX64) {
         match op {
-            Reg::Rbx => self.emit_code(&[0xFF, 0xD3]),
-            Reg::Rcx => self.emit_code(&[0xFF, 0xD1]),
-            _ => JitCode::panic(PanicReason::NotSupported)
+            RegX64::Rbx => self.emit_code(&[0xFF, 0xD3]),
+            RegX64::Rcx => self.emit_code(&[0xFF, 0xD1]),
+            _ => JitCodeX64::panic(PanicReason::NotSupported)
         }
     }
 
-    fn emit_pop_r(&mut self, op: Reg) {
+    fn emit_pop_r(&mut self, op: RegX64) {
         match op {
-            Reg::Rbp => self.emit_code(&[0x5D]),
-            Reg::Rbx => self.emit_code(&[0x5B]),
-            Reg::Rdx => self.emit_code(&[0x5A]),
-            _ => JitCode::panic(PanicReason::NotSupported)
+            RegX64::Rbp => self.emit_code(&[0x5D]),
+            RegX64::Rbx => self.emit_code(&[0x5B]),
+            RegX64::Rdx => self.emit_code(&[0x5A]),
+            _ => JitCodeX64::panic(PanicReason::NotSupported)
         }
     }
 
@@ -209,12 +214,12 @@ impl JitCode {
     }
 
     fn fill_offset(&self, addr: usize, offset: i64) {
-        if !JitCode::imm_is_i32(offset) {
+        if !JitCodeX64::imm_is_i32(offset) {
             panic!("Too far to call a subroutine");
         }
 
         let le_offset = (offset as i32).to_le();
-        let code = JitCode::get_raw_slice(&le_offset);
+        let code = JitCodeX64::get_raw_slice(&le_offset);
         unsafe {
             for i in 0..code.len() {
                 *self.machine_code.offset((addr + i) as isize) = code[i];
@@ -276,7 +281,7 @@ impl JitCode {
     }
 }
 
-impl Drop for JitCode {
+impl Drop for JitCodeX64 {
     fn drop(&mut self) {
         unsafe {
             libc::free(mem::transmute(self.machine_code));
@@ -284,8 +289,8 @@ impl Drop for JitCode {
     }
 }
 
-pub struct JitCompiler {
-    jit_code: JitCode
+pub struct JitCompilerX64 {
+    jit_code: JitCodeX64
 }
 
 extern "C" fn test(t: i64) {
@@ -298,56 +303,54 @@ extern "C" fn _getchar() -> i32 {
     tmp_str.chars().next().unwrap() as i32
 }
 
-impl JitCompiler {
-    pub fn new() -> JitCompiler {
-        JitCompiler {jit_code: JitCode::new()}
-    }
+impl JitCompilerX64 {
+
 
     fn emit_move_next(&mut self) {
-        self.jit_code.emit_inc_r(Reg::Rbx);
+        self.jit_code.emit_inc_r(RegX64::Rbx);
     }
 
     fn emit_move_prev(&mut self) {
-        self.jit_code.emit_dec_r(Reg::Rbx);
+        self.jit_code.emit_dec_r(RegX64::Rbx);
     }
 
     fn emit_push_regs(&mut self) {
-        self.jit_code.emit_push_r(Reg::Rbx);
-        self.jit_code.emit_push_r(Reg::Rdx);
+        self.jit_code.emit_push_r(RegX64::Rbx);
+        self.jit_code.emit_push_r(RegX64::Rdx);
     }
 
     fn emit_pop_regs(&mut self) {
-        self.jit_code.emit_pop_r(Reg::Rdx);
-        self.jit_code.emit_pop_r(Reg::Rbx);
+        self.jit_code.emit_pop_r(RegX64::Rdx);
+        self.jit_code.emit_pop_r(RegX64::Rbx);
     }
 
     fn emit_putchar(&mut self) {
         self.emit_push_regs();
 
-        self.jit_code.emit_mov_ri(Reg::Rcx, 0);
+        self.jit_code.emit_mov_ri(RegX64::Rcx, 0);
         self.jit_code.emit_code(&[0x8A, 0x0C, 0x1A]); //mov cl, BYTE PTR [rdx+rbx*1]
-        self.jit_code.emit_mov_rr(Reg::Rdi, Reg::Rcx);
-        self.jit_code.emit_mov_ri(Reg::Rcx, unsafe {mem::transmute(putchar)});
-        self.jit_code.emit_call_r(Reg::Rcx);
-        self.jit_code.emit_mov_ri(Reg::Rcx, unsafe {mem::transmute(libc::fflush)});
-        self.jit_code.emit_call_r(Reg::Rcx);
+        self.jit_code.emit_mov_rr(RegX64::Rdi, RegX64::Rcx);
+        self.jit_code.emit_mov_ri(RegX64::Rcx, putchar as u64);
+        self.jit_code.emit_call_r(RegX64::Rcx);
+        self.jit_code.emit_mov_ri(RegX64::Rcx, libc::fflush as u64);
+        self.jit_code.emit_call_r(RegX64::Rcx);
 
         self.emit_pop_regs();
     }
 
-    fn debug_print_reg(&mut self, reg: Reg) {
+    fn debug_print_reg(&mut self, reg: RegX64) {
         self.emit_push_regs();
-        self.jit_code.emit_mov_rr(Reg::Rdi, reg);
-        self.jit_code.emit_mov_ri(Reg::Rcx, unsafe {mem::transmute(test)});
-        self.jit_code.emit_call_r(Reg::Rcx);
+        self.jit_code.emit_mov_rr(RegX64::Rdi, reg);
+        self.jit_code.emit_mov_ri(RegX64::Rcx, test as u64);
+        self.jit_code.emit_call_r(RegX64::Rcx);
         self.emit_pop_regs();
     }
 
     fn emit_getchar(&mut self) {
         self.emit_push_regs();
 
-        self.jit_code.emit_mov_ri(Reg::Rcx, unsafe {mem::transmute(_getchar)});
-        self.jit_code.emit_call_r(Reg::Rcx);
+        self.jit_code.emit_mov_ri(RegX64::Rcx, _getchar as u64);
+        self.jit_code.emit_call_r(RegX64::Rcx);
         self.emit_pop_regs();
 
         self.jit_code.emit_code(&[0x88, 0x04, 0x1a]); //mov BYTE PTR [rdx+rbx*1], al
@@ -355,22 +358,29 @@ impl JitCompiler {
 
     fn emit_data_inc(&mut self) {
         self.jit_code.emit_code(&[0x8A, 0x0C, 0x1A]); //mov cl, BYTE PTR [rdx+rbx*1]
-        self.jit_code.emit_inc_r(Reg::Rcx);
+        self.jit_code.emit_inc_r(RegX64::Rcx);
         self.jit_code.emit_code(&[0x88, 0x0C, 0x1A]); //mov BYTE PTR [rdx+rbx*1], cl
     }
 
     fn emit_data_dec(&mut self) {
         self.jit_code.emit_code(&[0x8A, 0x0C, 0x1A]); //mov cl, BYTE PTR [rdx+rbx*1]
-        self.jit_code.emit_dec_r(Reg::Rcx);
+        self.jit_code.emit_dec_r(RegX64::Rcx);
         self.jit_code.emit_code(&[0x88, 0x0C, 0x1A]); //mov BYTE PTR [rdx+rbx*1], cl
     }
 
-    pub fn compile_and_run(&mut self, code: &str) {
-        self.jit_code.emit_push_r(Reg::Rbp);
-        self.jit_code.emit_mov_rr(Reg::Rbp, Reg::Rsp);
+}
+
+
+impl JitCompiler for JitCompilerX64 {
+    fn new() -> JitCompilerX64 {
+        JitCompilerX64 {jit_code: JitCodeX64::new()}
+    }
+    fn compile_and_run(&mut self, code: &str) {
+        self.jit_code.emit_push_r(RegX64::Rbp);
+        self.jit_code.emit_mov_rr(RegX64::Rbp, RegX64::Rsp);
         self.emit_push_regs();
-        self.jit_code.emit_mov_ri(Reg::Rbx, 0); //Rbx = data_pointer
-        self.jit_code.emit_mov_rr(Reg::Rdx, Reg::Rdi); //Rdx = memory_base
+        self.jit_code.emit_mov_ri(RegX64::Rbx, 0); //Rbx = data_pointer
+        self.jit_code.emit_mov_rr(RegX64::Rdx, RegX64::Rdi); //Rdx = memory_base
 
         let mut memory: Vec<u8>= vec![0; 10000];
         let mut stack = Vec::new();
@@ -384,12 +394,12 @@ impl JitCompiler {
                 ',' => self.emit_getchar(),
                 '[' => {
                     let pc = self.jit_code.code_size;
-                    self.jit_code.emit_mov_ri(Reg::Rcx, 0);
+                    self.jit_code.emit_mov_ri(RegX64::Rcx, 0);
                     self.jit_code.emit_code(&[0x8A, 0x0C, 0x1A]); //mov cl, BYTE PTR [rdx+rbx*1]
                     self.jit_code.emit_code(&[0x84, 0xC9]); //test cl, cl
                     let patch = self.jit_code.emit_jmp_with_patchback(Jump::Jz);
                     stack.push((pc, patch));
-                    self.jit_code.emit_dec_r(Reg::Rcx);
+                    self.jit_code.emit_dec_r(RegX64::Rcx);
                 },
                 ']' => {
                     match stack.pop() {
@@ -407,8 +417,8 @@ impl JitCompiler {
             }
         }
         self.emit_pop_regs();
-        self.jit_code.emit_mov_rr(Reg::Rsp, Reg::Rbp);
-        self.jit_code.emit_pop_r(Reg::Rbp);
+        self.jit_code.emit_mov_rr(RegX64::Rsp, RegX64::Rbp);
+        self.jit_code.emit_pop_r(RegX64::Rbp);
         self.jit_code.emit_ret();
         let func: extern "C" fn(*mut u8) = unsafe { mem::transmute(self.jit_code.function()) };
         func(memory.as_mut_ptr());
